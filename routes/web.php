@@ -1,15 +1,33 @@
 <?php
 
+use App\Http\Controllers\DeploymentController;
+use App\Http\Controllers\SettingsController;
 use Illuminate\Support\Facades\Route;
-use Inertia\Inertia;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\NetworkController;
 
 Route::get('/', function () {
-    return Inertia::render('Welcome');
-})->name('home');
+    return redirect()->route('dashboard');
+});
 
-Route::get('dashboard', function () {
-    return Inertia::render('Dashboard');
-})->middleware(['auth', 'verified'])->name('dashboard');
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
-require __DIR__.'/settings.php';
+    Route::get('/network/scan', [NetworkController::class, 'scan'])->name('network.scan');
+
+    Route::get('/deployments/new', [DeploymentController::class, 'create'])->name('deployments.create');
+    Route::get('/deployments/{deployment}', [DeploymentController::class, 'show'])
+        ->name('deployments.show');
+
+    Route::get('/settings', [SettingsController::class, 'edit'])->name('settings.edit');
+    Route::post('/settings', [SettingsController::class, 'update'])->name('settings.update');
+
+    Route::get('/installers/browse', [DeploymentController::class, 'browse'])
+        ->name('installers.browse');
+    Route::post('/deployments', [DeploymentController::class, 'store'])
+        ->name('deployments.store');
+
+        
+});
+
 require __DIR__.'/auth.php';
