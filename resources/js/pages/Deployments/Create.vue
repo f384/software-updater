@@ -12,14 +12,16 @@ const uninstallArgs = ref('');
 /** targets */
 const hosts = ref<any[]>([]);
 const selectedHosts = ref<string[]>([]);
-
+const loadingHosts = ref(false);
 /** installer browser state */
 const items = ref<any[]>([]);
 const currentPath = ref(''); // relative path within root
 const selectedInstaller = ref<string | null>(null); // relative file path
 const root = ref<string>(''); // absolute root (UNC/local)
 const errorMsg = ref<string | null>(null);
-
+const subnet = ref('');
+const defaultUsername = ref('PECS');
+const defaultPassword = ref('pecs');
 /** full path (for display) */
 const fullSelectedPath = computed(() => {
     if (!root.value || !selectedInstaller.value) return '';
@@ -44,18 +46,30 @@ const load = async (path = '') => {
         selectedInstaller.value = null;
     }
 };
-
 const scanQuick = async () => {
-    const { data } = await axios.get('/network/scan', { params: { mode: 'quick' } });
-    hosts.value = data;
-    selectedHosts.value = [];
+    loadingHosts.value = true;
+    try {
+        const { data } = await axios.get('/network/scan', {
+            params: { mode: 'quick', resolve: 1, subnet: subnet.value },
+        });
+        hosts.value = data;
+        selectedHosts.value = [];
+    } finally {
+        loadingHosts.value = false;
+    }
 };
 
 const scanFull = async () => {
-    // This can take a bit longer; optionally show a spinner
-    const { data } = await axios.get('/network/scan', { params: { mode: 'full' } });
-    hosts.value = data;
-    selectedHosts.value = [];
+    loadingHosts.value = true;
+    try {
+        const { data } = await axios.get('/network/scan', {
+            params: { mode: 'full', resolve: 1, subnet: subnet.value },
+        });
+        hosts.value = data;
+        selectedHosts.value = [];
+    } finally {
+        loadingHosts.value = false;
+    }
 };
 
 onMounted(() => load());
@@ -81,18 +95,24 @@ const selectItem = async (item: any) => {
 
 /** submit (no file upload) */
 const deploy = () => {
-    if (!selectedInstaller.value || selectedHosts.value.length === 0) {
+    if (!selectedInstaller.value || !selectedHosts.value.length) {
         alert('Please select installer and target PCs');
         return;
     }
 
+    const chosen = hosts.value
+        .filter((h) => selectedHosts.value.includes(h.ip))
+        .map((h) => ({
+            ...h,
+            username: h.username || defaultUsername.value,
+            password: h.password || defaultPassword.value,
+        }));
+
     const form = new FormData();
-    form.append('installer_rel_path', selectedInstaller.value); // send RELATIVE path
+    form.append('installer_rel_path', selectedInstaller.value);
     form.append('uninstall_first', uninstallFirst.value ? '1' : '0');
     form.append('install_args', installArgs.value);
     form.append('uninstall_args', uninstallArgs.value);
-
-    const chosen = hosts.value.filter((h) => selectedHosts.value.includes(h.ip));
     form.append('hosts', JSON.stringify(chosen));
 
     router.post('/deployments', form);
@@ -186,6 +206,17 @@ const deploy = () => {
             <div class="space-y-4 rounded-xl bg-white p-6 shadow dark:bg-gray-800">
                 <div class="flex items-center justify-between">
                     <h2 class="text-lg font-semibold text-gray-800 dark:text-gray-100">Target PCs</h2>
+                    <div class="flex items-center gap-2">
+                        <label for="subnet" class="text-sm text-gray-700 dark:text-gray-300">Subnet filter:</label>
+                        <input
+                            id="subnet"
+                            v-model="subnet"
+                            type="text"
+                            placeholder="192.168.2."
+                            class="rounded-lg border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                        />
+                    </div>
+
                     <div class="flex gap-2">
                         <button
                             @click="scanQuick"
@@ -201,8 +232,36 @@ const deploy = () => {
                         </button>
                     </div>
                 </div>
+                <div class="grid gap-4 md:grid-cols-2">
+                    <div>
+                        <label class="mb-1 block text-sm font-medium">Default Username</label>
+                        <input
+                            v-model="defaultUsername"
+                            type="text"
+                            placeholder="Administrator"
+                            class="w-full rounded-lg border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                        />
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-sm font-medium">Default Password</label>
+                        <input
+                            v-model="defaultPassword"
+                            type="password"
+                            placeholder="••••••••"
+                            class="w-full rounded-lg border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                        />
+                    </div>
+                </div>
 
-                <div v-if="hosts.length === 0" class="text-sm text-gray-500 dark:text-gray-400">No PCs found yet. Click "Scan Network".</div>
+                <div v-if="loadingHosts" class="flex items-center justify-center py-6 text-gray-600 dark:text-gray-300">
+                    <svg class="mr-2 h-5 w-5 animate-spin text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                    </svg>
+                    Scanning network, please wait...
+                </div>
+
+                <div v-else-if="hosts.length === 0" class="text-sm text-gray-500 dark:text-gray-400">No PCs found yet. Click "Scan Network".</div>
 
                 <div v-else class="overflow-x-auto">
                     <table class="w-full text-sm">
@@ -211,6 +270,8 @@ const deploy = () => {
                                 <th class="px-4 py-2">Select</th>
                                 <th class="px-4">Hostname</th>
                                 <th class="px-4">IP</th>
+                                <th class="px-4">Username</th>
+                                <th class="px-4">Password</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -224,6 +285,22 @@ const deploy = () => {
                                 </td>
                                 <td class="px-4 text-gray-800 dark:text-gray-200">{{ h.hostname }}</td>
                                 <td class="px-4 text-gray-600 dark:text-gray-400">{{ h.ip }}</td>
+                                <td class="px-4">
+                                    <input
+                                        v-model="h.username"
+                                        type="text"
+                                        class="w-full rounded border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                                        placeholder="Default → {{ defaultUsername }}"
+                                    />
+                                </td>
+                                <td class="px-4">
+                                    <input
+                                        v-model="h.password"
+                                        type="password"
+                                        class="w-full rounded border-gray-300 bg-white text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                                        placeholder="Default"
+                                    />
+                                </td>
                             </tr>
                         </tbody>
                     </table>

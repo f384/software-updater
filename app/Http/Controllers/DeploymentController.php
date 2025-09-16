@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\RunDeploymentJob;
 use App\Models\Deployment;
 use App\Models\DeploymentTarget;
 use Illuminate\Http\Request;    
 use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
 use App\Models\Setting;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\File;
 
 class DeploymentController extends Controller
@@ -23,7 +25,7 @@ class DeploymentController extends Controller
             'uninstall_first'    => 'boolean',
             'install_args'       => 'nullable|string',
             'uninstall_args'     => 'nullable|string',
-            'hosts'              => 'required|string', // JSON
+            'hosts'              => 'required|string',
         ]);
 
         $hosts = json_decode($request->input('hosts'), true) ?: [];
@@ -35,7 +37,7 @@ class DeploymentController extends Controller
         $deployment = Deployment::create([
             'user_id'                => Auth::id(),
             'installer_original_name'=> basename($full),
-            'installer_stored_path'  => $full,        
+            'installer_stored_path'  => $full,
             'uninstall_first'        => $request->boolean('uninstall_first'),
             'options'                => [
                 'install_args'   => $request->input('install_args', ''),
@@ -48,12 +50,18 @@ class DeploymentController extends Controller
         foreach ($hosts as $h) {
             DeploymentTarget::create([
                 'deployment_id' => $deployment->id,
+                'ip'            => $h['ip'] ?? null,
                 'hostname'      => $h['hostname'] ?? $h['ip'] ?? 'unknown',
+                'username'      => $h['username'] ?? null,
+                'password'      => $h['password'] ?? null,
                 'status'        => 'pending',
             ]);
         }
 
-        return redirect()->route('dashboard')->with('success', 'Deployment created!');
+        // 🚀 Trigger the job here
+        RunDeploymentJob::dispatch($deployment);
+
+        return redirect()->route('dashboard')->with('success', 'Deployment created and started!');
     }
 
     public function browse(Request $request)
